@@ -1,10 +1,10 @@
 # TR3000 Switch Button
 
-Cudy TR3000 的通用物理拨动开关控制器，面向 OpenWrt / ImmortalWrt。
+Cudy TR3000 物理拨动开关控制器，适用于 OpenWrt / ImmortalWrt。
 
-主程序只负责识别档位、去抖、执行动作和失败重试。**你提供一个脚本，程序向它传入 `on` / `off`**；可以接入 VPN、Wi-Fi、广告过滤、LED 或自己的服务。默认示例只写日志，不修改网络。
+程序读取开关档位，通过向自定义脚本传入 `on` / `off` 控制 VPN、Wi-Fi、广告过滤、LED 等服务，支持去抖、失败重试和状态查询。默认动作脚本仅记录日志。
 
-WireGuard 是 [独立的可选接入示例](examples/wireguard/README.md)，不是主程序的依赖。本项目提供源码安装，不包含 LuCI 页面，也不是 Cudy 原厂固件插件。
+项目采用源码安装，通过命令行和 UCI 配置，要求固件提供相应的 GPIO 或按钮事件接口。WireGuard 接入方式见 [可选示例](examples/wireguard/README.md)。
 
 ## 工作方式
 
@@ -24,7 +24,7 @@ WireGuard 是 [独立的可选接入示例](examples/wireguard/README.md)，不�
 
 ## 安装
 
-将整个目录复制到路由器，例如在电脑执行（按实际 LAN 地址修改）：
+将项目目录复制到路由器，以下以路由器 LAN 地址 `192.168.1.1` 为例：
 
 ```sh
 scp -r tr3000-switch-button root@192.168.1.1:/root/
@@ -33,11 +33,11 @@ cd /root/tr3000-switch-button
 sh install.sh
 ```
 
-如果较新的 `scp` 提示路由器没有 SFTP，可以改用 `scp -O -r ...`。
+路由器未安装 SFTP 时，可使用 `scp -O -r ...`。
 
 安装脚本检查 TR3000 板型、OpenWrt 环境和必要命令；保留已有配置和动作脚本，不自动启动服务。已经启用的 `slide-switch` 或已有 `/etc/rc.button/BTN_0` 需要先处理，避免一个开关执行两套操作。
 
-编辑路由器上的 `/etc/tr3000-switch/action.sh`，然后启动：
+编辑路由器上的 `/etc/tr3000-switch/action.sh`，配置档位对应的操作后启用服务：
 
 ```sh
 chmod 700 /etc/tr3000-switch/action.sh
@@ -50,7 +50,7 @@ tr3000-switch status
 
 ## 通用接入接口
 
-配置项 `action` 是**可执行文件的绝对路径**，不是一串 shell 命令。例如：
+配置项 `action` 指定**可执行文件的绝对路径**。动作脚本示例：
 
 ```sh
 #!/bin/sh
@@ -65,7 +65,7 @@ case "$1" in
 esac
 ```
 
-上面的 `my-service` 替换成自己的服务或命令；也可以在分支中调用多个脚本。默认模板见 [examples/action.sh](examples/action.sh)。
+将 `my-service` 替换为目标服务，也可在分支中调用多个命令或脚本。默认模板见 [examples/action.sh](examples/action.sh)。
 
 | 输入 | 含义 |
 | --- | --- |
@@ -75,9 +75,9 @@ esac
 | 返回码 `0` | 动作成功 |
 | 非零返回码 / 超时 | 动作失败，记录日志并按当前档位重试 |
 
-脚本以 root 执行，需要**幂等**：重复 `on` 应保持开启，重复 `off` 应保持关闭；不要写成每次调用都反转状态。脚本应在动作完成后退出，不要在后台留下持续修改状态的进程。执行中的动作不会因拨动而强制取消，因此最长响应时间还取决于动作耗时/超时。
+脚本以 root 执行，需满足**幂等性**：重复调用 `on` 保持开启，重复调用 `off` 保持关闭。脚本应在动作完成后退出，避免后台进程持续修改状态。执行中的动作不会因拨动而强制取消，响应时间取决于动作耗时和超时设置。
 
-如需换一个接入脚本：
+更换动作脚本：
 
 ```sh
 uci set tr3000-switch.main.action='/etc/tr3000-switch/my-action.sh'
@@ -85,7 +85,7 @@ uci commit tr3000-switch
 /etc/init.d/tr3000-switch restart
 ```
 
-可选健康检查：将 `check_interval` 设为大于 0 的秒数，脚本还需支持 `脚本 check on` 和 `脚本 check off`。返回非零会触发重新应用档位。默认关闭，普通接入只实现 `on` / `off` 即可。健康检查调用设置 `TR3000_SWITCH_STATE`，不提供 `TR3000_SWITCH_PREVIOUS`。
+健康检查默认关闭。将 `check_interval` 设为大于 0 的秒数后，脚本需支持 `脚本 check on` 和 `脚本 check off`；返回非零会触发重新应用档位。健康检查调用设置 `TR3000_SWITCH_STATE`，不提供 `TR3000_SWITCH_PREVIOUS`。
 
 ## 配置与调试
 
@@ -104,7 +104,7 @@ uci commit tr3000-switch
 | `action_timeout` | `30` | 单次脚本执行时间上限 |
 | `check_interval` | `0` | 健康检查间隔；`0` 表示关闭 |
 
-如果物理左右方向与预期相反：
+对调物理开关的两档映射：
 
 ```sh
 uci set tr3000-switch.main.invert='1'
@@ -132,7 +132,7 @@ tr3000-switch run off
 
 停止监听服务不会自动运行 `off`，也不会撤销用户脚本产生的效果。需要关闭时，先停止服务再执行 `tr3000-switch run off`。切换接入脚本前，应先完成原脚本的清理。
 
-如果显示 `physical=unknown`：先拨动一次检查事件是否到达；若仍不可用，查看 `diagnose`。缺少 debugfs 且没有收到事件时，程序等待而不猜测档位。这类固件无法保证启动即识别当前档位，需要根据实际内核修正 GPIO/事件支持。
+显示 `physical=unknown` 时，可拨动开关检查按钮事件，并通过 `diagnose` 查看 GPIO 和日志。缺少 debugfs 且未收到按钮事件时，程序保持等待；启动时识别当前档位需要固件提供可用的 GPIO 读取接口。
 
 ## 卸载与升级
 
@@ -142,18 +142,4 @@ sh uninstall.sh
 
 卸载会停止监听、调用当前脚本 `off`，再删除程序文件，保留配置和用户脚本。使用 WireGuard 示例时先按它的文档恢复网络配置。
 
-升级本项目可重新运行 `install.sh`，它会停止监听并保留配置/接入脚本，完成后手动启动服务。系统刷机/sysupgrade 后应重新安装，不保证自定义程序被固件保留。
-
-## 验证范围
-
-本地自动测试覆盖档位解析、反转、事件备用输入、去抖、重复事件、失败重试、串行执行及通用接入调用；WireGuard 示例还包含失败时保留阻断规则和恢复顺序的模拟测试。
-
-```sh
-python3 -m unittest discover -s tests -v
-# 在装有 BusyBox 的 Linux 上测试目标 shell：
-TEST_SHELL='busybox ash' python3 -m unittest discover -s tests -v
-```
-
-尚未在你的 TR3000 上实机验证；路由器不需要安装 Python。支持目标是具备这些 GPIO/按钮接口的 OpenWrt / ImmortalWrt，原厂固件另需适配。
-
-实现参考：[OpenWrt TR3000 设备树](https://github.com/openwrt/openwrt/blob/main/target/linux/mediatek/dts/mt7981b-cudy-tr3000-v1.dtsi)、[GPIO 按钮驱动](https://github.com/openwrt/openwrt/blob/main/package/kernel/gpio-button-hotplug/src/gpio-button-hotplug.c)、[procd 按钮分发](https://github.com/openwrt/openwrt/blob/openwrt-24.10/package/system/procd/files/hotplug.json)。
+升级时重新运行 `install.sh`，安装器会停止监听并保留配置和动作脚本，完成后手动启动服务。系统刷机或 sysupgrade 后需重新安装。
