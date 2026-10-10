@@ -1,0 +1,18 @@
+# Copy to /root/tr3000-switch-wg, chmod 600, then edit on the router.
+# Do not commit real private/preshared keys to Git.
+config wireguard 'client'
+	option private_key 'REPLACE_WITH_CLIENT_PRIVATE_KEY'
+	option public_key 'REPLACE_WITH_SERVER_PUBLIC_KEY'
+	# option preshared_key 'OPTIONAL_PRESHARED_KEY'
+	list addresses '10.66.66.2/32'
+	# Only add an IPv6 address if supplied by your VPN provider:
+	# list addresses 'fd00:66:66::2/128'
+	option endpoint_host '203.0.113.10'
+	option endpoint_port '51820'
+	option mtu '1420'
+	option lan_device 'br-lan'
+	option lan_zone 'lan'
+	# Logical uplink interface, e.g. wan / wwan (not eth0 / wlan0).
+	option tunlink 'wan'
+	list dns '1.1.1.1'
+	list dns '9.9.9.9'

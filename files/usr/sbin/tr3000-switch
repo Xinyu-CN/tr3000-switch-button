@@ -1,0 +1,85 @@
+#!/bin/sh
+. /usr/lib/tr3000-switch/core.sh
+
+is_running() { [ -r "$RUN_DIR/pid" ] && kill -0 "$(cat "$RUN_DIR/pid")" 2>/dev/null; }
+
+daemon() {
+	local candidate='' count=0 applied='' ticks=0 health=0 state rc
+	load_settings || exit 1
+	[ "$ENABLED" = 1 ] || exit 0
+	runtime_init || exit 1
+	# procd owns the single action worker; events only update desired input.
+	is_running && { fail 'daemon already running'; exit 1; }
+	worker_lock || { fail 'another action worker owns the lock'; exit 1; }
+	write_value pid "$$"
+	trap 'rm -f "$RUN_DIR/pid"; worker_unlock' EXIT
+	trap 'exit 0' INT TERM
+	if [ ! -r "$GPIO_FILE" ]; then
+		mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null || :
+	fi
+	write_value status waiting-for-switch
+	log "started; GPIO consumer=$GPIO_LABEL button=$BUTTON action=$ACTION_SCRIPT"
+	while :; do
+		state=$(desired_state) || state=unknown
+		if [ "$state" = unknown ]; then
+			[ "$candidate" = unknown ] || log 'switch state unavailable; flip once or run diagnose'
+			candidate=unknown; count=0
+			sleep "$POLL"; continue
+		fi
+		if [ "$state" = "$candidate" ]; then count=$((count + 1)); else candidate="$state"; count=1; ticks=0; fi
+		if [ "$count" -ge "$SAMPLES" ]; then
+			if [ "$state" != "$applied" ] && [ "$ticks" -le 0 ]; then
+				rc=0; apply_state "$state" || rc=$?
+				if [ "$rc" = 0 ]; then applied="$state"; else applied=''; fi
+				ticks="$RETRY"; health="$CHECK_INTERVAL"
+			fi
+			if [ "$CHECK_INTERVAL" -gt 0 ] && [ -n "$applied" ] && [ "$health" -le 0 ]; then
+				if ! check_action "$applied"; then
+					applied=''; ticks=0
+					write_value status check-failed
+					log 'adapter health check failed; will reapply current position'
+				fi
+				health="$CHECK_INTERVAL"
+			fi
+		fi
+		sleep "$POLL"
+		ticks=$((ticks - POLL)); health=$((health - POLL))
+	done
+}
+
+case "${1:-status}" in
+	daemon) daemon;;
+	event)
+		[ "$(cfg enabled 0)" = 1 ] || exit 0
+		[ "${BUTTON:-}" = "$(cfg button BTN_0)" ] || exit 0
+		case "${ACTION:-}" in pressed) state=on;; released) state=off;; *) exit 0;; esac
+		runtime_init && write_value event "$state"
+		;;
+	on|off|auto)
+		runtime_init || exit 1
+		is_running || { fail 'start the service first'; exit 1; }
+		write_value override "$1"
+		printf 'Requested %s; check tr3000-switch status.\n' "$1"
+		;;
+	run)
+		case "${2:-}" in on|off) ;; *) fail 'Usage: tr3000-switch run on|off'; exit 2;; esac
+		is_running && { fail 'stop the service before run, or use tr3000-switch on/off'; exit 1; }
+		load_settings && runtime_init || exit 1
+		worker_lock || { fail 'another action worker owns the lock'; exit 1; }
+		trap worker_unlock EXIT
+		trap 'exit 1' INT TERM
+		apply_state "$2"
+		;;
+	status|diagnose)
+		load_settings || exit 1
+		printf 'enabled=%s physical=%s action=%s\n' "$ENABLED" "$(physical_state || printf unknown)" "$ACTION_SCRIPT"
+		if is_running; then printf 'daemon=running\n'; else printf 'daemon=stopped\n'; fi
+		for key in override desired applied status; do printf '%s=%s\n' "$key" "$(cat "$RUN_DIR/$key" 2>/dev/null || printf unknown)"; done
+		if [ "${1:-}" = diagnose ]; then
+			printf '\nBoard: '; cat /tmp/sysinfo/board_name 2>/dev/null
+			printf '\nGPIO:\n'; cat "$GPIO_FILE" 2>/dev/null
+			printf '\nDaemon log:\n'; logread -e tr3000-switch
+		fi
+		;;
+	*) printf 'Usage: tr3000-switch {status|diagnose|on|off|auto|run on|run off}\n' >&2; exit 2;;
+esac

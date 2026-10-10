@@ -1,0 +1,19 @@
+name: Shell and behavior checks
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y busybox
+      - name: Shell syntax
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          for path in Path('.').rglob('*'):
+              if path.is_file() and '.git' not in path.parts and path.read_bytes().startswith(b'#!/bin/sh'):
+                  subprocess.run(['busybox', 'ash', '-n', str(path)], check=True)
+          PY
+      - run: python3 -m unittest discover -s tests -v
+      - run: TEST_SHELL='busybox ash' python3 -m unittest discover -s tests -v

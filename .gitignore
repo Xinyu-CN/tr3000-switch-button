@@ -1,0 +1,11 @@
+.DS_Store
+__pycache__/
+*.pyc
+*.tar.gz
+*.zip
+*.private*
+*.key
+*.conf
+/tr3000-switch-wg
+/backups/
+.tools/

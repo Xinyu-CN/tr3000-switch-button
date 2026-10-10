@@ -1,0 +1,13 @@
+config switch 'main'
+	option enabled '0'
+	option button 'BTN_0'
+	option gpio_label 'mode'
+	option invert '0'
+	option poll_seconds '1'
+	option stable_samples '2'
+	option retry_seconds '30'
+	option action_timeout '30'
+	# Universal adapter: called as /path/to/script on|off.
+	option action '/etc/tr3000-switch/action.sh'
+	# Optional: /path/to/script check on|off. 0 disables checks.
+	option check_interval '0'
